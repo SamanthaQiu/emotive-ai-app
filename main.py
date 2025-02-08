@@ -14,70 +14,70 @@ import os
 import shutil
 from torch.utils.data import DataLoader
 
-print(torch.version.cuda)  # 查看 PyTorch 兼容的 CUDA 版本
+print(torch.version.cuda)  # Check the CUDA version compatible with PyTorch
 
-# 确保 sklearn 已安装，否则安装
+# Ensure sklearn is installed; otherwise, install it
 try:
     from sklearn.metrics import accuracy_score
 except ImportError:
     os.system("pip install scikit-learn")
 
-# 目录路径
+# Directory paths
 output_dir = "imdb-distilbert-finetuned"
 log_dir = "logs"
 
-# **检查 logs 是否已经存在**
+# **Check if logs directory already exists**
 if os.path.exists(log_dir):
     if not os.path.isdir(log_dir):  
         print(f"⚠️ Error: {log_dir} exists but is not a directory. Removing it...")
-        os.remove(log_dir)  # **删除错误的文件**
+        os.remove(log_dir)  # **Remove incorrect file**
     else:
         print(f"🗑 Removing existing directory: {log_dir}")
-        shutil.rmtree(log_dir)  # **删除整个目录**
+        shutil.rmtree(log_dir)  # **Remove entire directory**
 
-# **确保 logs 目录正确创建**
+# **Ensure logs directory is properly created**
 try:
     os.makedirs(log_dir, exist_ok=True)
     print(f"✅ Directory '{log_dir}' successfully created!")
 except Exception as e:
     print(f"❌ Failed to create directory '{log_dir}': {e}")
-    exit(1)  # **强制退出，避免后续错误**
+    exit(1)  # **Force exit to prevent further errors**
 
-# 打印 PyTorch 版本信息
-print(f"PyTorch 版本: {torch.__version__}")
-print(f"CUDA 是否可用: {torch.cuda.is_available()}")
+# Print PyTorch version information
+print(f"PyTorch version: {torch.__version__}")
+print(f"CUDA available: {torch.cuda.is_available()}")
 
-# 加载 IMDb 数据集
+# Load IMDb dataset
 raw_datasets = load_dataset("imdb")
 
-# 加载预训练的 tokenizer
+# Load pre-trained tokenizer
 model_checkpoint = "distilbert-base-uncased"
 tokenizer = AutoTokenizer.from_pretrained(model_checkpoint)
 
-# 定义 tokenization 过程
+# Define tokenization process
 def tokenize_function(examples):
     return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=256)
 
-# 预处理数据集
+# Preprocess dataset
 encoded_datasets = raw_datasets.map(tokenize_function, batched=True)
 
-# 数据拆分（训练集 90%，验证集 10%）
+# Split dataset (90% training, 10% validation)
 small_train_dataset = encoded_datasets["train"].train_test_split(test_size=0.1)
 train_dataset = small_train_dataset["train"]
 eval_dataset = small_train_dataset["test"]
 test_dataset = encoded_datasets["test"]
 
-# **💡 修正 train_dataloader 位置**
+# **Fix train_dataloader location**
 train_dataloader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=4)
 
-# 加载预训练的模型
+# Load pre-trained model
 num_labels = 2
 model = AutoModelForSequenceClassification.from_pretrained(model_checkpoint, num_labels=num_labels)
 
-# 训练配置
+# Training configuration
 training_args = TrainingArguments(
     output_dir=output_dir,
-    logging_dir=log_dir,  # ✅ 确保 logs 目录正确
+    logging_dir=log_dir,  # ✅ Ensure logs directory is correct
     evaluation_strategy="epoch",
     save_strategy="epoch",
     learning_rate=2e-5,
@@ -89,7 +89,7 @@ training_args = TrainingArguments(
     load_best_model_at_end=True
 )
 
-# 计算准确率的函数
+# Function to compute accuracy
 accuracy_metric = load_metric("accuracy")
 
 def compute_metrics(eval_preds):
@@ -97,55 +97,69 @@ def compute_metrics(eval_preds):
     predictions = np.argmax(logits, axis=-1)
     return accuracy_metric.compute(predictions=predictions, references=labels)
 
-# 初始化 Trainer
+# Initialize Trainer
 trainer = Trainer(
     model=model,
     args=training_args,
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
-    tokenizer=tokenizer,  # 未来将被移除
+    tokenizer=tokenizer,  # Will be deprecated in future versions
     compute_metrics=compute_metrics
 )
 
-# 训练模型
+# Train the model
 trainer.train()
 
-# 在测试集上评估
+# Evaluate on the test set
 metrics = trainer.evaluate(test_dataset)
 print("Test set metrics:", metrics)
 
-# 保存训练好的模型
+# Save fine-tuned model
 fine_tuned_model_path = "fine_tuned_sentiment_model"
 trainer.save_model(fine_tuned_model_path)
 
-# 加载训练好的模型用于推理
+# Load trained model for inference
 sentiment_pipeline = pipeline(
     "text-classification",
     model=fine_tuned_model_path,
     tokenizer=tokenizer,
-    return_all_scores=True
+    top_k=1  # Replace return_all_scores=True to avoid format errors
 )
 
-# 读取 IMDB 数据集进行推理
+# Load IMDb dataset for inference
 dataset_path = "IMDB_Dataset.csv"
 df = pd.read_csv(dataset_path)
 
-# 使用 fine-tuned 模型进行情感分析
-df["predicted_sentiment"] = df["review"].apply(lambda x: sentiment_pipeline(x[:256])[0]['label'])
+# **Fix sentiment_pipeline return format**
+def get_sentiment_label(text):
+    try:
+        result = sentiment_pipeline(text[:256])  # Run sentiment analysis
+        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list) and len(result[0]) > 0:
+            return result[0][0].get('label', "UNKNOWN")  # Extract label from nested list
+        elif isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
+            return result[0].get('label', "UNKNOWN")  # Support previous format
+        else:
+            print(f"Unexpected result format: {result}")
+            return "UNKNOWN"
+    except Exception as e:
+        print(f"Error processing text: {text[:50]}... - {e}")
+        return "ERROR"
 
-# 将标签映射为 0（负面）或 1（正面）
-df["predicted_sentiment"] = df["predicted_sentiment"].map({"LABEL_1": 1, "LABEL_0": 0})
+df["predicted_sentiment"] = df["review"].apply(get_sentiment_label)
 
-# 保存结果
+# Map labels to 0 (negative) or 1 (positive)
+df["predicted_sentiment"] = df["predicted_sentiment"].map({"LABEL_1": 1, "LABEL_0": 0}).fillna(-1)  # Handle unknown cases
+
+# Save results
 output_path = "IMDB_Dataset_labeled.csv"
 df.to_csv(output_path, index=False)
 
 print(f"Labeled dataset saved as '{output_path}'.")
 
-# 🎯 添加 Stretch Goal: 让用户输入一个影评，输出情感分析结果
+# Interactive sentiment analysis
 while True:
-    user_input = input("输入一条电影评论 (输入 'exit' 退出): ")
+    user_input = input("Enter a movie review (type 'exit' to quit): ")
     if user_input.lower() == "exit":
         break
-    prediction = sentiment_pipeline(user_input)
-    print("情感分析结果:", prediction)
+    prediction = get_sentiment_label(user_input)
+    print("Sentiment analysis result:", prediction)
