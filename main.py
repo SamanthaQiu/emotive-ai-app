@@ -14,152 +14,135 @@ import os
 import shutil
 from torch.utils.data import DataLoader
 
-print(torch.version.cuda)  # Check the CUDA version compatible with PyTorch
-
-# Ensure sklearn is installed; otherwise, install it
-try:
-    from sklearn.metrics import accuracy_score
-except ImportError:
-    os.system("pip install scikit-learn")
-
-# Directory paths
-output_dir = "imdb-distilbert-finetuned"
-log_dir = "logs"
-
-# **Check if logs directory already exists**
-if os.path.exists(log_dir):
-    if not os.path.isdir(log_dir):  
-        print(f"⚠️ Error: {log_dir} exists but is not a directory. Removing it...")
-        os.remove(log_dir)  # **Remove incorrect file**
-    else:
-        print(f"🗑 Removing existing directory: {log_dir}")
-        shutil.rmtree(log_dir)  # **Remove entire directory**
-
-# **Ensure logs directory is properly created**
-try:
-    os.makedirs(log_dir, exist_ok=True)
-    print(f"✅ Directory '{log_dir}' successfully created!")
-except Exception as e:
-    print(f"❌ Failed to create directory '{log_dir}': {e}")
-    exit(1)  # **Force exit to prevent further errors**
-
-# Print PyTorch version information
+# Check PyTorch and CUDA availability
 print(f"PyTorch version: {torch.__version__}")
 print(f"CUDA available: {torch.cuda.is_available()}")
 
-# Load IMDb dataset
-raw_datasets = load_dataset("imdb")
+def get_sentiment_label(sentiment_pipeline, text):
+    """
+    Predicts the sentiment label of a given text using a trained sentiment analysis model.
+    """
+    try:
+        result = sentiment_pipeline(text[:256])
 
-# Load pre-trained tokenizer
-model_checkpoint = "distilbert-base-uncased"
-tokenizer = AutoTokenizer.from_pretrained(model_checkpoint)
+        # Handle different output formats from the sentiment analysis pipeline
+        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list) and len(result[0]) > 0:
+            result = result[0][0]
+        elif isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
+            result = result[0]
+        else:
+            print(f"Unexpected result format: {result}")
+            return "ERROR"
 
-# Define tokenization process
-def tokenize_function(examples):
+        label = result["label"]
+        score = result["score"]
+
+        # Define the logic for positive and negative classification
+        if label == "LABEL_1" or (label == "LABEL_0" and score < 0.5):  
+            return "Positive", score
+        else:
+            return "Negative", score
+
+    except Exception as e:
+        print(f"Error processing text: {text[:50]}... - {e}")
+        return "ERROR", 0.0
+
+def tokenize_function(examples, tokenizer):
+    """
+    Tokenizes the input text dataset.
+    """
     return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=256)
 
-# Preprocess dataset
-encoded_datasets = raw_datasets.map(tokenize_function, batched=True)
-
-# Split dataset (90% training, 10% validation)
-small_train_dataset = encoded_datasets["train"].train_test_split(test_size=0.1)
-train_dataset = small_train_dataset["train"]
-eval_dataset = small_train_dataset["test"]
-test_dataset = encoded_datasets["test"]
-
-# **Fix train_dataloader location**
-train_dataloader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=4)
-
-# Load pre-trained model
-num_labels = 2
-model = AutoModelForSequenceClassification.from_pretrained(model_checkpoint, num_labels=num_labels)
-
-# Training configuration
-training_args = TrainingArguments(
-    output_dir=output_dir,
-    logging_dir=log_dir,  # ✅ Ensure logs directory is correct
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    learning_rate=2e-5,
-    per_device_train_batch_size=8,
-    per_device_eval_batch_size=8,
-    num_train_epochs=3,
-    weight_decay=0.01,
-    logging_steps=100,
-    load_best_model_at_end=True
-)
-
-# Function to compute accuracy
-accuracy_metric = load_metric("accuracy")
-
-def compute_metrics(eval_preds):
+def compute_metrics(eval_preds, accuracy_metric):
+    """
+    Computes accuracy metrics for model evaluation.
+    """
     logits, labels = eval_preds
     predictions = np.argmax(logits, axis=-1)
     return accuracy_metric.compute(predictions=predictions, references=labels)
 
-# Initialize Trainer
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=train_dataset,
-    eval_dataset=eval_dataset,
-    tokenizer=tokenizer,  # Will be deprecated in future versions
-    compute_metrics=compute_metrics
-)
+def train_model(train_dataset, eval_dataset, tokenizer):
+    """
+    Trains the DistilBERT model for sentiment analysis and returns the trained model.
+    """
+    model = AutoModelForSequenceClassification.from_pretrained("distilbert-base-uncased", num_labels=2)
 
-# Train the model
-trainer.train()
+    training_args = TrainingArguments(
+        output_dir="imdb-distilbert-finetuned",
+        logging_dir="logs",
+        evaluation_strategy="epoch",
+        save_strategy="epoch",
+        learning_rate=2e-5,
+        per_device_train_batch_size=8,
+        per_device_eval_batch_size=8,
+        num_train_epochs=3,
+        weight_decay=0.01,
+        logging_steps=100,
+        load_best_model_at_end=True
+    )
 
-# Evaluate on the test set
-metrics = trainer.evaluate(test_dataset)
-print("Test set metrics:", metrics)
+    accuracy_metric = load_metric("accuracy")  # Define accuracy metric inside function
 
-# Save fine-tuned model
-fine_tuned_model_path = "fine_tuned_sentiment_model"
-trainer.save_model(fine_tuned_model_path)
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        tokenizer=tokenizer,
+        compute_metrics=lambda eval_preds: compute_metrics(eval_preds, accuracy_metric)  # Pass metric
+    )
 
-# Load trained model for inference
-sentiment_pipeline = pipeline(
-    "text-classification",
-    model=fine_tuned_model_path,
-    tokenizer=tokenizer,
-    top_k=1  # Replace return_all_scores=True to avoid format errors
-)
+    trainer.train()
+    return model, tokenizer, trainer
 
-# Load IMDb dataset for inference
-dataset_path = "IMDB_Dataset.csv"
-df = pd.read_csv(dataset_path)
+def setup_environment():
+    """
+    Sets up directories and loads the dataset.
+    """
+    log_dir = "logs"
+    if os.path.exists(log_dir):
+        shutil.rmtree(log_dir)
+    os.makedirs(log_dir, exist_ok=True)
 
-# **Fix sentiment_pipeline return format**
-def get_sentiment_label(text):
-    try:
-        result = sentiment_pipeline(text[:256])  # Run sentiment analysis
-        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list) and len(result[0]) > 0:
-            return result[0][0].get('label', "UNKNOWN")  # Extract label from nested list
-        elif isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
-            return result[0].get('label', "UNKNOWN")  # Support previous format
-        else:
-            print(f"Unexpected result format: {result}")
-            return "UNKNOWN"
-    except Exception as e:
-        print(f"Error processing text: {text[:50]}... - {e}")
-        return "ERROR"
+    # Load the IMDb dataset
+    raw_datasets = load_dataset("imdb")
 
-df["predicted_sentiment"] = df["review"].apply(get_sentiment_label)
+    # Reduce dataset size for faster training
+    train_dataset = raw_datasets["train"].shuffle(seed=42).select(range(1000))
+    eval_dataset = raw_datasets["test"].shuffle(seed=42).select(range(500))
 
-# Map labels to 0 (negative) or 1 (positive)
-df["predicted_sentiment"] = df["predicted_sentiment"].map({"LABEL_1": 1, "LABEL_0": 0}).fillna(-1)  # Handle unknown cases
+    return train_dataset, eval_dataset
 
-# Save results
-output_path = "IMDB_Dataset_labeled.csv"
-df.to_csv(output_path, index=False)
+if __name__ == "__main__":
+    # Set up environment and load data
+    train_dataset, eval_dataset = setup_environment()
 
-print(f"Labeled dataset saved as '{output_path}'.")
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 
-# Interactive sentiment analysis
-while True:
-    user_input = input("Enter a movie review (type 'exit' to quit): ")
-    if user_input.lower() == "exit":
-        break
-    prediction = get_sentiment_label(user_input)
-    print("Sentiment analysis result:", prediction)
+    # Tokenize datasets
+    encoded_train_dataset = train_dataset.map(lambda x: tokenize_function(x, tokenizer), batched=True)
+    encoded_eval_dataset = eval_dataset.map(lambda x: tokenize_function(x, tokenizer), batched=True)
+
+    # Train model
+    model, tokenizer, trainer = train_model(encoded_train_dataset, encoded_eval_dataset, tokenizer)
+
+    # Save the trained model
+    fine_tuned_model_path = "fine_tuned_sentiment_model"
+    trainer.save_model(fine_tuned_model_path)
+
+    # Load trained model for inference
+    sentiment_pipeline = pipeline(
+        "text-classification",
+        model=fine_tuned_model_path,
+        tokenizer=tokenizer,
+        top_k=1
+    )
+
+    # Interactive sentiment analysis with scores
+    while True:
+        user_input = input("Enter a movie review (type 'exit' to quit): ")
+        if user_input.lower() == "exit":
+            break
+        sentiment, confidence = get_sentiment_label(sentiment_pipeline, user_input)
+        print(f"Sentiment Analysis Result: {sentiment} (Confidence: {confidence:.2f})")
