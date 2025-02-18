@@ -1,74 +1,60 @@
-<<<<<<< HEAD
-# emotive-ai-app
-=======
-# Getting Started with Create React App
+# Movie Review Sentiment Analysis
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+This project is a sentiment analysis web application that allows users to input movie reviews and receive sentiment analysis results. The application consists of a **React-based frontend** and a **Python Flask-based backend**.
 
-## Available Scripts
+## How to Start the React Frontend
 
-In the project directory, you can run:
+1. **Navigate to the frontend directory:**
+   ```sh
+   cd react-frontend
+   ```
 
-### `npm start`
+2. **Install dependencies:**
+   ```sh
+   npm install
+   ```
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+3. **Start the development server:**
+   ```sh
+   npm start
+   ```
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+4. **Access the frontend:**
+   - Open `http://localhost:3000` in your browser.
 
-### `npm test`
+## How to Start the Python Backend
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+1. **Navigate to the backend directory:**
+   ```sh
+   cd backend
+   ```
 
-### `npm run build`
+2. **Create and activate a virtual environment (optional but recommended):**
+   ```sh
+   python -m venv venv
+   source venv/bin/activate  # On macOS/Linux
+   venv\Scripts\activate  # On Windows
+   ```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+3. **Install dependencies:**
+   ```sh
+   pip install -r requirements.txt
+   ```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+4. **Run the Flask server:**
+   ```sh
+   python app.py
+   ```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+5. **API will be running at:**
+   - `http://127.0.0.1:5000`
 
-### `npm run eject`
+## Communication Between Frontend and Backend
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+- The React frontend sends user input (movie reviews) to the Flask backend via an API endpoint.
+- The backend processes the text using a sentiment analysis model and returns the sentiment and confidence score.
+- The frontend then displays the results to the user.
+- The primary API endpoint used:
+  - `POST /analyze` - Accepts JSON input `{ "review": "<user input>" }` and returns a JSON response `{ "sentiment": "Positive", "confidence": 0.96 }`.
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
->>>>>>> 94ef14b (Add react-frontend code)
+This structure ensures smooth communication between the frontend and backend, enabling real-time sentiment analysis for user-submitted movie reviews.
