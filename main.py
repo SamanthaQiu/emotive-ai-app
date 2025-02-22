@@ -1,5 +1,5 @@
 import pandas as pd
-from datasets import load_dataset
+from datasets import load_dataset, Dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
@@ -12,76 +12,66 @@ from evaluate import load as load_metric
 import torch
 import os
 import shutil
-from torch.utils.data import DataLoader
 
 # Check PyTorch and CUDA availability
 print(f"PyTorch version: {torch.__version__}")
 print(f"CUDA available: {torch.cuda.is_available()}")
 
-def get_sentiment_label(sentiment_pipeline, text):
-    """
-    Predicts the sentiment label of a given text using a trained sentiment analysis model.
-    """
-    try:
-        result = sentiment_pipeline(text[:256])
-
-        # Handle different output formats from the sentiment analysis pipeline
-        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list) and len(result[0]) > 0:
-            result = result[0][0]
-        elif isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
-            result = result[0]
-        else:
-            print(f"Unexpected result format: {result}")
-            return "ERROR"
-
-        label = result["label"]
-        score = result["score"]
-
-        # Define the logic for positive and negative classification
-        if label == "LABEL_1" or (label == "LABEL_0" and score < 0.5):  
-            return "Positive", score
-        else:
-            return "Negative", score
-
-    except Exception as e:
-        print(f"Error processing text: {text[:50]}... - {e}")
-        return "ERROR", 0.0
-
+# Function to tokenize input texts
 def tokenize_function(examples, tokenizer):
-    """
-    Tokenizes the input text dataset.
-    """
-    return tokenizer(examples["text"], truncation=True, padding="max_length", max_length=256)
+    return tokenizer(examples["review"], truncation=True, padding="max_length", max_length=256)
 
-def compute_metrics(eval_preds, accuracy_metric):
-    """
-    Computes accuracy metrics for model evaluation.
-    """
+# Compute accuracy for evaluation
+def compute_metrics(eval_preds):
     logits, labels = eval_preds
     predictions = np.argmax(logits, axis=-1)
+    accuracy_metric = load_metric("accuracy")
     return accuracy_metric.compute(predictions=predictions, references=labels)
 
+# Preprocess Amazon dataset
+def preprocess_amazon_dataset(file_path):
+    df = pd.read_csv(file_path)
+    print(f"Available columns in Amazon dataset: {df.columns}")
+
+    # Drop rows with missing values in required columns
+    df = df.dropna(subset=["review", "sentiment"])
+
+    # Convert sentiments to binary: Positive (1) and Negative (0)
+    df['sentiment'] = df['sentiment'].apply(lambda x: 1 if x.lower() == "positive" else 0)
+
+    dataset = Dataset.from_pandas(df)
+    return dataset
+
+# Load and preprocess IMDb dataset
+def load_imdb_dataset():
+    imdb_data = load_dataset("imdb")
+    train_dataset = imdb_data["train"].shuffle(seed=42).select(range(500))  # Reduce for faster training
+    eval_dataset = imdb_data["test"].shuffle(seed=42).select(range(250))
+
+    # Rename 'text' column to 'review' to match Amazon dataset
+    train_dataset = train_dataset.rename_columns({"text": "review"})
+    eval_dataset = eval_dataset.rename_columns({"text": "review"})
+
+    print("IMDb dataset loaded successfully.")
+    return train_dataset, eval_dataset
+
+# Train the model
 def train_model(train_dataset, eval_dataset, tokenizer):
-    """
-    Trains the DistilBERT model for sentiment analysis and returns the trained model.
-    """
     model = AutoModelForSequenceClassification.from_pretrained("distilbert-base-uncased", num_labels=2)
 
     training_args = TrainingArguments(
-        output_dir="imdb-distilbert-finetuned",
+        output_dir="fine_tuned_sentiment_model",
         logging_dir="logs",
         evaluation_strategy="epoch",
         save_strategy="epoch",
         learning_rate=2e-5,
         per_device_train_batch_size=8,
         per_device_eval_batch_size=8,
-        num_train_epochs=3,
+        num_train_epochs=2,  # Reduced for faster training
         weight_decay=0.01,
         logging_steps=100,
         load_best_model_at_end=True
     )
-
-    accuracy_metric = load_metric("accuracy")  # Define accuracy metric inside function
 
     trainer = Trainer(
         model=model,
@@ -89,60 +79,80 @@ def train_model(train_dataset, eval_dataset, tokenizer):
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         tokenizer=tokenizer,
-        compute_metrics=lambda eval_preds: compute_metrics(eval_preds, accuracy_metric)  # Pass metric
+        compute_metrics=compute_metrics
     )
 
     trainer.train()
     return model, tokenizer, trainer
 
+# Set up environment and load datasets
 def setup_environment():
-    """
-    Sets up directories and loads the dataset.
-    """
-    log_dir = "logs"
-    if os.path.exists(log_dir):
-        shutil.rmtree(log_dir)
-    os.makedirs(log_dir, exist_ok=True)
+    # Load IMDb dataset
+    train_dataset, eval_dataset = load_imdb_dataset()
 
-    # Load the IMDb dataset
-    raw_datasets = load_dataset("imdb")
-
-    # Reduce dataset size for faster training
-    train_dataset = raw_datasets["train"].shuffle(seed=42).select(range(1000))
-    eval_dataset = raw_datasets["test"].shuffle(seed=42).select(range(500))
-
-    return train_dataset, eval_dataset
-
-if __name__ == "__main__":
-    # Set up environment and load data
-    train_dataset, eval_dataset = setup_environment()
+    # Load Amazon dataset
+    amazon_dataset = preprocess_amazon_dataset("amazon_sales_dataset.csv")
 
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 
     # Tokenize datasets
     encoded_train_dataset = train_dataset.map(lambda x: tokenize_function(x, tokenizer), batched=True)
-    encoded_eval_dataset = eval_dataset.map(lambda x: tokenize_function(x, tokenizer), batched=True)
+    encoded_amazon_dataset = amazon_dataset.map(lambda x: tokenize_function(x, tokenizer), batched=True)
 
-    # Train model
-    model, tokenizer, trainer = train_model(encoded_train_dataset, encoded_eval_dataset, tokenizer)
+    return encoded_train_dataset, encoded_amazon_dataset, tokenizer
 
-    # Save the trained model
-    fine_tuned_model_path = "fine_tuned_sentiment_model"
-    trainer.save_model(fine_tuned_model_path)
+# Inference function for user input
+def analyze_sentiment(sentiment_pipeline, text):
+    try:
+        result = sentiment_pipeline(text[:256])  # Truncate input for consistency
+        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
+            label = result[0]['label']
+            score = result[0]['score']
+            sentiment = "Positive" if "POSITIVE" in label.upper() else "Negative"
+            return sentiment, score
+        else:
+            return "ERROR", 0.0
+    except Exception as e:
+        print(f"Error processing input: {e}")
+        return "ERROR", 0.0
 
-    # Load trained model for inference
+# Main execution block
+if __name__ == "__main__":
+    imdb_train, amazon_train, tokenizer = setup_environment()
+
+    # Train on IMDb dataset
+    print("Training on IMDb dataset...")
+    model, tokenizer, trainer = train_model(imdb_train, imdb_train, tokenizer)
+
+    # Fine-tune on Amazon dataset
+    print("Fine-tuning on Amazon dataset...")
+    model, tokenizer, trainer = train_model(amazon_train, amazon_train, tokenizer)
+
+    # Save the final fine-tuned model
+    model_path = "final_fine_tuned_model"
+    if not os.path.exists(model_path):
+        os.makedirs(model_path)
+
+    torch.save(model.state_dict(), os.path.join(model_path, "pytorch_model.bin"))
+    tokenizer.save_pretrained(model_path)
+
+    print("Model trained and saved successfully!")
+
+    # Load trained model for predictions
     sentiment_pipeline = pipeline(
         "text-classification",
-        model=fine_tuned_model_path,
-        tokenizer=tokenizer,
-        top_k=1
+        model=model,
+        tokenizer=tokenizer
     )
 
-    # Interactive sentiment analysis with scores
+    # Interactive sentiment analysis
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Device set to use {device}")
+
     while True:
-        user_input = input("Enter a movie review (type 'exit' to quit): ")
+        user_input = input("Enter a review (type 'exit' to quit): ")
         if user_input.lower() == "exit":
             break
-        sentiment, confidence = get_sentiment_label(sentiment_pipeline, user_input)
+        sentiment, confidence = analyze_sentiment(sentiment_pipeline, user_input)
         print(f"Sentiment Analysis Result: {sentiment} (Confidence: {confidence:.2f})")
