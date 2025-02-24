@@ -1,0 +1,72 @@
+/* Global Styles */
+body {
+    background-color: #13131a;
+    font-family: "Poppins", sans-serif;
+    color: white;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* Header Styling */
+header {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 24px;
+    font-weight: bold;
+}
+
+/* Main Container */
+.container {
+    display: flex;
+    justify-content: space-between;
+    width: 80%;
+    margin-top: 40px;
+}
+
+/* Input and Output Sections */
+.input-section, .output-section {
+    background: #1a1a2e;
+    padding: 20px;
+    border-radius: 8px;
+    width: 45%;
+    box-shadow: 0px 0px 15px rgba(0, 255, 255, 0.5);
+}
+
+/* Text Area */
+textarea {
+    width: 100%;
+    height: 100px;
+    background: #0d0d0d;
+    border: 1px solid cyan;
+    color: white;
+    padding: 10px;
+    font-size: 16px;
+}
+
+/* Button Styling */
+button {
+    background: linear-gradient(90deg, #0072ff, #00c6ff);
+    border: none;
+    padding: 10px;
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 10px;
+    border-radius: 5px;
+}
+
+/* AI Image Section */
+.ai-graphic {
+    text-align: center;
+    margin-top: 40px;
+}
+
+.ai-graphic img {
+    width: 50%;
+    border-radius: 10px;
+    box-shadow: 0px 0px 15px rgba(0, 255, 255, 0.7);
+}
